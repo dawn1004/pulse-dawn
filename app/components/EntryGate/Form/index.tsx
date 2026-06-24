@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -15,6 +15,9 @@ import { FieldError } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
 import { loadSavedProfile, saveProfile, clearProfile } from "@/lib/profile";
 import type { SessionProfile } from "@/lib/profile";
+import TurnstileWidget, {
+  type TurnstileHandle,
+} from "@/app/components/TurnstileWidget";
 import { cn } from "@/lib/utils";
 import ConfirmStep from "./ConfirmStep";
 import Step1 from "./Step1";
@@ -24,7 +27,7 @@ import StepIndicator from "./StepIndicator";
 import { STEPS } from "./steps";
 
 type FormProps = {
-  onEnter: (profile: SessionProfile) => void;
+  onEnter: (profile: SessionProfile, turnstileToken: string) => void;
   locateStatus: "idle" | "locating" | "error";
   locateError: string;
 };
@@ -47,6 +50,9 @@ export default function Form({
   const [saveInfo, setSaveInfo] = useState(false);
   const [showConfirmError, setShowConfirmError] = useState(false);
   const [usingSavedProfile, setUsingSavedProfile] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileError, setTurnstileError] = useState(false);
+  const turnstileRef = useRef<TurnstileHandle>(null);
 
   useEffect(() => {
     const saved = loadSavedProfile();
@@ -108,7 +114,10 @@ export default function Form({
   function handleBack() {
     setShowError(false);
     setShowConfirmError(false);
+    setTurnstileError(false);
     if (isConfirm) {
+      setTurnstileToken(null);
+      turnstileRef.current?.reset();
       setUsingSavedProfile(false);
       setPhase("steps");
       return;
@@ -137,7 +146,12 @@ export default function Form({
       setShowConfirmError(true);
       return;
     }
+    if (!turnstileToken) {
+      setTurnstileError(true);
+      return;
+    }
     setShowConfirmError(false);
+    setTurnstileError(false);
     saveProfile({
       nickname: nickname.trim(),
       aboutMe: aboutMe.trim(),
@@ -145,12 +159,15 @@ export default function Form({
       tags,
       recoverData: saveInfo,
     });
-    onEnter({
-      nickname: nickname.trim(),
-      aboutMe: aboutMe.trim(),
-      avatar,
-      tags,
-    });
+    onEnter(
+      {
+        nickname: nickname.trim(),
+        aboutMe: aboutMe.trim(),
+        avatar,
+        tags,
+      },
+      turnstileToken
+    );
   }
 
   if (!initialized) {
@@ -247,7 +264,24 @@ export default function Form({
             {isConfirm && locateStatus === "error" && (
               <p className="text-sm text-destructive">{locateError}</p>
             )}
+            {isConfirm && turnstileError && !turnstileToken && (
+              <FieldError className="w-full">
+                Complete the security check to enter.
+              </FieldError>
+            )}
           </div>
+
+          {isConfirm && (
+            <TurnstileWidget
+              ref={turnstileRef}
+              onVerify={(token) => {
+                setTurnstileToken(token);
+                setTurnstileError(false);
+              }}
+              onExpire={() => setTurnstileToken(null)}
+              onError={() => setTurnstileToken(null)}
+            />
+          )}
 
           <div className="flex w-full gap-2">
             {(step > 1 || isConfirm) && (
@@ -293,7 +327,7 @@ export default function Form({
               <Button
                 type="button"
                 onClick={handleEnter}
-                disabled={locateStatus === "locating"}
+                disabled={locateStatus === "locating" || !turnstileToken}
                 className={cn(
                   "rounded-full",
                   !canEnter && showConfirmError && "opacity-50"

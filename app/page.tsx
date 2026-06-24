@@ -455,10 +455,11 @@ export default function Home() {
   async function handleReady(
     lat: number,
     lng: number,
-    profile: SessionProfile
+    profile: SessionProfile,
+    turnstileToken: string,
   ) {
     const fingerprint = await getDeviceFingerprint();
-    await join(sessionId, lat, lng, profile, fingerprint);
+    await join(sessionId, lat, lng, profile, fingerprint, turnstileToken);
     setMyLocation({ lat, lng });
     setMyProfile(profile);
     setPhase("live");

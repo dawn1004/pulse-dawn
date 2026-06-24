@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { applyPrivacyOffset, isValidLatLng } from "@/lib/geo";
 import { isValidFingerprint } from "@/lib/moderation";
 import { parseSessionProfile } from "@/lib/profile";
+import { verifyTurnstileToken } from "@/lib/turnstile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,8 +19,21 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const { id, lat, lng, fingerprint, nickname, aboutMe, avatar, tags } =
+  const { id, lat, lng, fingerprint, nickname, aboutMe, avatar, tags, turnstileToken } =
     (body ?? {}) as Record<string, unknown>;
+
+  if (typeof turnstileToken !== "string" || !turnstileToken) {
+    return Response.json({ error: "turnstile required" }, { status: 400 });
+  }
+
+  const remoteIp =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    request.headers.get("x-real-ip") ??
+    undefined;
+
+  if (!(await verifyTurnstileToken(turnstileToken, remoteIp))) {
+    return Response.json({ error: "turnstile verification failed" }, { status: 403 });
+  }
 
   if (typeof id !== "string" || id.length < 8 || id.length > 64) {
     return Response.json({ error: "invalid id" }, { status: 400 });

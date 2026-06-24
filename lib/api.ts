@@ -15,11 +15,12 @@ export async function join(
   lng: number,
   profile: SessionProfile,
   fingerprint: string,
+  turnstileToken: string,
 ): Promise<void> {
   const res = await fetch("/api/join", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, lat, lng, fingerprint, ...profile }),
+    body: JSON.stringify({ id, lat, lng, fingerprint, turnstileToken, ...profile }),
   });
   if (!res.ok) throw new Error(`join failed: ${res.status}`);
 }

@@ -13,14 +13,17 @@ export default function EntryGate({
     lat: number,
     lng: number,
     profile: SessionProfile,
+    turnstileToken: string,
   ) => void | Promise<void>;
 }) {
   const [status, setStatus] = useState<"idle" | "locating" | "error">("idle");
   const [error, setError] = useState<string>("");
   const profileRef = useRef<SessionProfile | null>(null);
+  const turnstileRef = useRef<string | null>(null);
 
-  function enter(profile: SessionProfile) {
+  function enter(profile: SessionProfile, turnstileToken: string) {
     profileRef.current = profile;
+    turnstileRef.current = turnstileToken;
     if (!("geolocation" in navigator)) {
       setStatus("error");
       setError("Your browser doesn't support location access.");
@@ -30,9 +33,10 @@ export default function EntryGate({
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const p = profileRef.current;
-        if (!p) return;
+        const token = turnstileRef.current;
+        if (!p || !token) return;
         void Promise.resolve(
-          onReady(pos.coords.latitude, pos.coords.longitude, p),
+          onReady(pos.coords.latitude, pos.coords.longitude, p, token),
         ).catch(() => {
           setStatus("error");
           setError("Couldn't join. Please try again.");
