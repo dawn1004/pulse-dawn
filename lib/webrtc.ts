@@ -9,6 +9,8 @@ interface PeerCallbacks {
   onSignal: (type: DescType, payload: string) => void;
   onChat: (text: string) => void;
   onControl: (ctrl: PeerControl) => void;
+  onTyping: (active: boolean) => void;
+  onVideoState: (cameraOn: boolean) => void;
   onRemoteStream: (stream: MediaStream | null) => void;
   onConnectionState: (state: RTCPeerConnectionState) => void;
   onChannelOpen: () => void;
@@ -80,6 +82,10 @@ export class PeerSession {
           this.cb.onChat(msg.text);
         } else if (msg.t === "ctrl" && typeof msg.ctrl === "string") {
           this.cb.onControl(msg.ctrl as PeerControl);
+        } else if (msg.t === "typing" && typeof msg.active === "boolean") {
+          this.cb.onTyping(msg.active);
+        } else if (msg.t === "video-state" && typeof msg.camera === "boolean") {
+          this.cb.onVideoState(msg.camera);
         }
       } catch {}
     };
@@ -107,7 +113,6 @@ export class PeerSession {
     this.ignoreOffer = !this.polite && offerCollision;
     if (this.ignoreOffer) return;
 
-    await this.flushPendingCandidates();
     await this.pc.setRemoteDescription(desc);
     if (desc.type === "offer") {
       await this.pc.setLocalDescription();
@@ -115,6 +120,8 @@ export class PeerSession {
         this.cb.onSignal("answer", JSON.stringify(this.pc.localDescription));
       }
     }
+    // ICE candidates must be applied after the remote description is set.
+    await this.flushPendingCandidates();
   }
 
   private async flushPendingCandidates() {
@@ -129,11 +136,19 @@ export class PeerSession {
   }
 
   sendChat(text: string) {
-    this.safeSend({ t: "msg", text });
+    this.safeSend({ t: "chat", text });
   }
 
   sendControl(ctrl: PeerControl) {
     this.safeSend({ t: "ctrl", ctrl });
+  }
+
+  sendTyping(active: boolean) {
+    this.safeSend({ t: "typing", active });
+  }
+
+  sendVideoState(cameraOn: boolean) {
+    this.safeSend({ t: "video-state", camera: cameraOn });
   }
 
   private safeSend(obj: unknown) {

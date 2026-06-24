@@ -12,13 +12,42 @@ datasource db {
 }
 
 model Presence {
-  id       String   @id // client-generated session uuid
-  lat      Float // ALREADY privacy-offset coords (raw is never stored)
-  lng      Float
-  busy     Boolean  @default(false) // true while in an active connection
-  lastSeen DateTime
+  id          String   @id // client-generated session uuid
+  lat         Float // ALREADY privacy-offset coords (raw is never stored)
+  lng         Float
+  busy        Boolean  @default(false) // true while in an active connection
+  lastSeen    DateTime
+  nickname    String
+  aboutMe     String   @default("")
+  avatar      String // mood id
+  tags        String[]
+  fingerprint String? // device fingerprint for moderation
 
   @@index([lastSeen])
+}
+
+// Durable moderation state keyed by device fingerprint.
+model DeviceModeration {
+  fingerprint  String    @id
+  reportCount  Int       @default(0)
+  bannedUntil  DateTime?
+  permanentBan Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// Audit log of user reports. One report per reporter session per reported peer.
+model UserReport {
+  id                  String   @id @default(uuid())
+  reporterSessionId   String
+  reportedSessionId   String
+  reportedFingerprint String
+  reason              String
+  details             String?
+  createdAt           DateTime @default(now())
+
+  @@unique([reporterSessionId, reportedSessionId])
+  @@index([reportedFingerprint])
 }
 
 model Signal {

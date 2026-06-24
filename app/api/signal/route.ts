@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { isBanned } from "@/lib/moderation";
 import type { SignalType } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -53,14 +54,36 @@ export async function POST(request: NextRequest) {
   // Enforce "one active connection at a time": if the target is already busy,
   // auto-decline the request instead of delivering it.
   if (signalType === "request") {
+    const sender = await prisma.presence.findUnique({
+      where: { id: fromId },
+      select: { fingerprint: true },
+    });
+    if (sender?.fingerprint) {
+      const moderation = await prisma.deviceModeration.findUnique({
+        where: { fingerprint: sender.fingerprint },
+      });
+      if (moderation && isBanned(moderation)) {
+        return Response.json({ error: "banned" }, { status: 403 });
+      }
+    }
+
     const target = await prisma.presence.findUnique({
       where: { id: toId },
-      select: { busy: true },
+      select: { busy: true, fingerprint: true },
     });
     if (!target) {
       // Target went offline — tell the initiator it was declined.
       await sendDecline(toId, fromId);
       return Response.json({ ok: true, autoDeclined: true });
+    }
+    if (target.fingerprint) {
+      const targetModeration = await prisma.deviceModeration.findUnique({
+        where: { fingerprint: target.fingerprint },
+      });
+      if (targetModeration && isBanned(targetModeration)) {
+        await sendDecline(toId, fromId);
+        return Response.json({ ok: true, autoDeclined: true });
+      }
     }
     if (target.busy) {
       await sendDecline(toId, fromId);
@@ -72,11 +95,24 @@ export async function POST(request: NextRequest) {
   // - accept: the connection is now active → mark BOTH peers busy.
   // - decline/end: free both peers.
   if (signalType === "accept") {
+    const accepter = await prisma.presence.findUnique({
+      where: { id: fromId },
+      select: { fingerprint: true },
+    });
+    if (accepter?.fingerprint) {
+      const moderation = await prisma.deviceModeration.findUnique({
+        where: { fingerprint: accepter.fingerprint },
+      });
+      if (moderation && isBanned(moderation)) {
+        return Response.json({ error: "banned" }, { status: 403 });
+      }
+    }
+
     await prisma.presence.updateMany({
       where: { id: { in: [fromId, toId] } },
       data: { busy: true },
     });
-  } else if (signalType === "decline") {
+  } else if (signalType === "decline" || signalType === "end") {
     await prisma.presence.updateMany({
       where: { id: { in: [fromId, toId] } },
       data: { busy: false },

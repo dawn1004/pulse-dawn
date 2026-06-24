@@ -3,28 +3,67 @@
 import { useEffect, useRef, useState } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Map as MapboxMap, Marker } from "mapbox-gl";
+import { Users } from "lucide-react";
 import type { PeerDot } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import type { PeerMapFilters } from "@/lib/filterPeers";
+import MapDotLegend from "./MapDotLegend";
+import MapPeerFilters from "./MapPeerFilters";
 
-const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
+function resolveMapboxToken(): string {
+  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN?.trim();
+  if (!token || token.includes("your_mapbox_token")) return "";
+  return token;
+}
 
-function dotColor(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+const TOKEN = resolveMapboxToken();
+
+function applyDotState(
+  el: HTMLButtonElement,
+  peer: { id: string; busy: boolean; banned: boolean },
+  connectedPeerId: string | null
+) {
+  el.classList.remove(
+    "pulse-dot--available",
+    "pulse-dot--busy",
+    "pulse-dot--connected",
+    "pulse-dot--banned"
+  );
+  if (connectedPeerId === peer.id) {
+    el.classList.add("pulse-dot--connected");
+    el.title = "Connected with you";
+  } else if (peer.banned) {
+    el.classList.add("pulse-dot--banned");
+    el.title = "Restricted — cannot connect";
+  } else if (peer.busy) {
+    el.classList.add("pulse-dot--busy");
+    el.title = "Unavailable — in a conversation";
+  } else {
+    el.classList.add("pulse-dot--available");
+    el.title = "Available — view profile";
   }
-  return `hsl(${Math.abs(hash) % 360}, 70%, 60%)`;
 }
 
 export default function WorldMap({
   peers,
+  totalPeerCount,
   me,
   onPeerClick,
   canConnect,
+  connectedPeerId,
+  mapFilters,
+  onMapFiltersChange,
+  hasTags,
 }: {
   peers: PeerDot[];
+  totalPeerCount: number;
   me: { lat: number; lng: number } | null;
   onPeerClick: (id: string) => void;
   canConnect: boolean;
+  connectedPeerId: string | null;
+  mapFilters: PeerMapFilters;
+  onMapFiltersChange: (filters: PeerMapFilters) => void;
+  hasTags: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
@@ -94,7 +133,10 @@ export default function WorldMap({
         el.title = "You are here";
         el.innerHTML = `<span class="pulse-me-label">Me</span>📍`;
         // anchor "bottom" → the pin's tip sits on the exact coordinate.
-        meMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+        meMarkerRef.current = new mapboxgl.Marker({
+          element: el,
+          anchor: "bottom",
+        })
           .setLngLat([me.lng, me.lat])
           .addTo(map);
       } else {
@@ -125,8 +167,7 @@ export default function WorldMap({
         if (!marker) {
           const el = document.createElement("button");
           el.className = "pulse-dot";
-          el.style.background = dotColor(peer.id);
-          el.title = "Tap to connect";
+          applyDotState(el, peer, connectedPeerId);
           el.addEventListener("click", (e) => {
             e.stopPropagation();
             if (canConnectRef.current) onPeerClickRef.current(peer.id);
@@ -135,8 +176,13 @@ export default function WorldMap({
             .setLngLat([peer.lng, peer.lat])
             .addTo(map);
           markers.set(peer.id, marker);
+        } else {
+          applyDotState(
+            marker.getElement() as HTMLButtonElement,
+            peer,
+            connectedPeerId
+          );
         }
-        marker.getElement().style.opacity = peer.busy ? "0.35" : "1";
       }
 
       // Drop markers for peers that went offline / got filtered out.
@@ -151,7 +197,7 @@ export default function WorldMap({
     return () => {
       cancelled = true;
     };
-  }, [peers, ready]);
+  }, [peers, ready, connectedPeerId]);
 
   return (
     <div className="absolute inset-0">
@@ -161,16 +207,34 @@ export default function WorldMap({
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
           <p className="max-w-md rounded-lg bg-zinc-800 p-4 text-sm text-zinc-200">
             Set{" "}
-            <code className="text-emerald-400">NEXT_PUBLIC_MAPBOX_TOKEN</code> in{" "}
-            <code>.env</code> to load the map.
+            <code className="text-emerald-400">NEXT_PUBLIC_MAPBOX_TOKEN</code>{" "}
+            in <code>.env</code> to load the map.
           </p>
         </div>
       )}
 
-      {/* Online count */}
-      <div className="absolute bottom-4 left-4 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur">
-        {peers.length} online
+      <div className="absolute top-4 left-4 z-10 flex w-fit max-w-[min(100%,20rem)] flex-col gap-2">
+        <Badge
+          variant="secondary"
+          className="h-auto w-full justify-start gap-1.5 border-border/60 bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur supports-backdrop-filter:bg-card/80"
+        >
+          <Users className="size-3.5 text-primary" aria-hidden />
+          <span>
+            {totalPeerCount !== peers.length
+              ? `${peers.length} of ${totalPeerCount} `
+              : `${peers.length} `}
+            {peers.length === 1 ? "person" : "people"} online
+          </span>
+        </Badge>
+
+        <MapDotLegend />
       </div>
+
+      <MapPeerFilters
+        filters={mapFilters}
+        onFiltersChange={onMapFiltersChange}
+        hasTags={hasTags}
+      />
     </div>
   );
 }

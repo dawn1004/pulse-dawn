@@ -1,6 +1,11 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { STALE_MS, SIGNAL_TTL_MS } from "@/lib/presence";
+import {
+  bannedFingerprintSet,
+  formatReportedBanMessage,
+  isBanned,
+} from "@/lib/moderation";
 import type { PollResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -21,11 +26,32 @@ export async function GET(request: NextRequest) {
   const staleCutoff = new Date(now - STALE_MS);
   const signalCutoff = new Date(now - SIGNAL_TTL_MS);
 
-  // 1) Heartbeat — refresh lastSeen for the caller.
+  // 1) Heartbeat — refresh lastSeen for the caller only.
+  const caller = await prisma.presence.findUnique({
+    where: { id },
+    select: { fingerprint: true },
+  });
   await prisma.presence.updateMany({
-    where: {},
+    where: { id },
     data: { lastSeen: new Date(now) },
   });
+
+  let ban: PollResponse["ban"] = null;
+  if (caller?.fingerprint) {
+    const moderation = await prisma.deviceModeration.findUnique({
+      where: { fingerprint: caller.fingerprint },
+    });
+    if (moderation && isBanned(moderation)) {
+      ban = {
+        message: formatReportedBanMessage(
+          moderation.bannedUntil,
+          moderation.permanentBan,
+        ),
+        bannedUntil: moderation.bannedUntil?.toISOString() ?? null,
+        permanentBan: moderation.permanentBan,
+      };
+    }
+  }
 
   // 2) Reap stale presence rows and orphaned signals (independent deletes —
   // no atomicity needed, and avoids transactions over a PgBouncer pooler).
@@ -33,13 +59,38 @@ export async function GET(request: NextRequest) {
   await prisma.signal.deleteMany({ where: { createdAt: { lt: signalCutoff } } });
 
   // 3) Online peers, excluding self.
-  const peers = await prisma.presence.findMany({
+  const peersRaw = await prisma.presence.findMany({
     where: {
       id: { not: id },
       lastSeen: { gte: staleCutoff },
     },
-    select: { id: true, lat: true, lng: true, busy: true },
+    select: {
+      id: true,
+      lat: true,
+      lng: true,
+      busy: true,
+      nickname: true,
+      aboutMe: true,
+      avatar: true,
+      tags: true,
+      fingerprint: true,
+    },
   });
+
+  const fingerprints = [
+    ...new Set(
+      peersRaw
+        .map((p) => p.fingerprint)
+        .filter((f): f is string => typeof f === "string" && f.length > 0),
+    ),
+  ];
+  const moderations =
+    fingerprints.length > 0
+      ? await prisma.deviceModeration.findMany({
+          where: { fingerprint: { in: fingerprints } },
+        })
+      : [];
+  const bannedFingerprints = bannedFingerprintSet(moderations);
 
   // 4) Drain this user's mailbox: read, then delete exactly what we read so a
   // concurrently-inserted signal is never lost.
@@ -54,11 +105,16 @@ export async function GET(request: NextRequest) {
   }
 
   const response: PollResponse = {
-    peers: peers.map((p) => ({
+    peers: peersRaw.map((p) => ({
       id: p.id,
       lat: p.lat,
       lng: p.lng,
       busy: p.busy,
+      banned: !!p.fingerprint && bannedFingerprints.has(p.fingerprint),
+      nickname: p.nickname,
+      aboutMe: p.aboutMe,
+      avatar: p.avatar,
+      tags: p.tags,
     })),
     signals: inbox.map((s) => ({
       id: s.id,
@@ -68,6 +124,7 @@ export async function GET(request: NextRequest) {
       payload: s.payload,
       createdAt: s.createdAt.toISOString(),
     })),
+    ban,
   };
 
   return Response.json(response);
