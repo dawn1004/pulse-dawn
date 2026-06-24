@@ -8,11 +8,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { cn } from "@/lib/utils";
 
-const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? "";
 
 export type TurnstileHandle = {
+  execute: () => boolean;
   reset: () => void;
 };
 
@@ -20,15 +20,10 @@ type TurnstileWidgetProps = {
   onVerify: (token: string) => void;
   onExpire: () => void;
   onError?: () => void;
-  className?: string;
-  size?: "normal" | "compact";
 };
 
 const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>(
-  function TurnstileWidget(
-    { onVerify, onExpire, onError, className, size = "normal" },
-    ref
-  ) {
+  function TurnstileWidget({ onVerify, onExpire, onError }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const widgetIdRef = useRef<string | null>(null);
     const callbacksRef = useRef({ onVerify, onExpire, onError });
@@ -39,6 +34,11 @@ const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>(
     }, [onVerify, onExpire, onError]);
 
     useImperativeHandle(ref, () => ({
+      execute: () => {
+        if (!widgetIdRef.current) return false;
+        window.turnstile.execute(widgetIdRef.current);
+        return true;
+      },
       reset: () => {
         if (widgetIdRef.current) {
           window.turnstile.reset(widgetIdRef.current);
@@ -58,7 +58,7 @@ const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>(
 
       widgetIdRef.current = window.turnstile.render(containerRef.current, {
         sitekey: SITE_KEY,
-        size,
+        size: "invisible",
         theme: "dark",
         callback: (token) => callbacksRef.current.onVerify(token),
         "expired-callback": () => {
@@ -75,7 +75,7 @@ const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>(
           widgetIdRef.current = null;
         }
       };
-    }, [scriptReady, size]);
+    }, [scriptReady]);
 
     if (!SITE_KEY) return null;
 
@@ -86,9 +86,11 @@ const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>(
           strategy="afterInteractive"
           onReady={() => setScriptReady(true)}
         />
+        {/* Off-screen mount — invisible widgets must stay in the DOM. */}
         <div
           ref={containerRef}
-          className={cn("flex justify-center", className)}
+          className="pointer-events-none absolute size-0 overflow-hidden"
+          aria-hidden
         />
       </>
     );

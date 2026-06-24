@@ -52,7 +52,9 @@ export default function Form({
   const [usingSavedProfile, setUsingSavedProfile] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileError, setTurnstileError] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const turnstileRef = useRef<TurnstileHandle>(null);
+  const pendingEnterRef = useRef(false);
 
   useEffect(() => {
     const saved = loadSavedProfile();
@@ -115,6 +117,8 @@ export default function Form({
     setShowError(false);
     setShowConfirmError(false);
     setTurnstileError(false);
+    setVerifying(false);
+    pendingEnterRef.current = false;
     if (isConfirm) {
       setTurnstileToken(null);
       turnstileRef.current?.reset();
@@ -141,15 +145,7 @@ export default function Form({
     setStep(1);
   }
 
-  function handleEnter() {
-    if (!canEnter) {
-      setShowConfirmError(true);
-      return;
-    }
-    if (!turnstileToken) {
-      setTurnstileError(true);
-      return;
-    }
+  function proceedEnter(token: string) {
     setShowConfirmError(false);
     setTurnstileError(false);
     saveProfile({
@@ -166,8 +162,51 @@ export default function Form({
         avatar,
         tags,
       },
-      turnstileToken
+      token
     );
+  }
+
+  function handleTurnstileVerify(token: string) {
+    setTurnstileToken(token);
+    setVerifying(false);
+    setTurnstileError(false);
+    if (pendingEnterRef.current) {
+      pendingEnterRef.current = false;
+      proceedEnter(token);
+    }
+  }
+
+  function handleTurnstileFail() {
+    setTurnstileToken(null);
+    setVerifying(false);
+    if (pendingEnterRef.current) {
+      pendingEnterRef.current = false;
+      setTurnstileError(true);
+    }
+  }
+
+  function handleEnter() {
+    if (!canEnter) {
+      setShowConfirmError(true);
+      return;
+    }
+
+    if (turnstileToken) {
+      proceedEnter(turnstileToken);
+      return;
+    }
+
+    setShowConfirmError(false);
+    setTurnstileError(false);
+    setVerifying(true);
+    pendingEnterRef.current = true;
+
+    const started = turnstileRef.current?.execute();
+    if (!started) {
+      pendingEnterRef.current = false;
+      setVerifying(false);
+      setTurnstileError(true);
+    }
   }
 
   if (!initialized) {
@@ -186,7 +225,15 @@ export default function Form({
 
   return (
     <div className="w-full">
-      <Card className="border-0 bg-transparent shadow-none ring-0">
+      <Card className="relative border-0 bg-transparent shadow-none ring-0">
+        {isConfirm && (
+          <TurnstileWidget
+            ref={turnstileRef}
+            onVerify={handleTurnstileVerify}
+            onExpire={handleTurnstileFail}
+            onError={handleTurnstileFail}
+          />
+        )}
         <CardHeader className="gap-5 pb-0">
           <StepIndicator step={step} complete={isConfirm} />
 
@@ -264,24 +311,12 @@ export default function Form({
             {isConfirm && locateStatus === "error" && (
               <p className="text-sm text-destructive">{locateError}</p>
             )}
-            {isConfirm && turnstileError && !turnstileToken && (
+            {isConfirm && turnstileError && (
               <FieldError className="w-full">
-                Complete the security check to enter.
+                Security check failed. Please try again.
               </FieldError>
             )}
           </div>
-
-          {isConfirm && (
-            <TurnstileWidget
-              ref={turnstileRef}
-              onVerify={(token) => {
-                setTurnstileToken(token);
-                setTurnstileError(false);
-              }}
-              onExpire={() => setTurnstileToken(null)}
-              onError={() => setTurnstileToken(null)}
-            />
-          )}
 
           <div className="flex w-full gap-2">
             {(step > 1 || isConfirm) && (
@@ -327,14 +362,18 @@ export default function Form({
               <Button
                 type="button"
                 onClick={handleEnter}
-                disabled={locateStatus === "locating" || !turnstileToken}
+                disabled={locateStatus === "locating" || verifying}
                 className={cn(
                   "rounded-full",
                   !canEnter && showConfirmError && "opacity-50"
                 )}
                 size="lg"
               >
-                {locateStatus === "locating" ? "Locating…" : "Enter Pulse"}
+                {locateStatus === "locating"
+                  ? "Locating…"
+                  : verifying
+                    ? "Verifying…"
+                    : "Enter Pulse"}
               </Button>
             )}
           </div>
