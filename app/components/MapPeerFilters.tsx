@@ -124,7 +124,12 @@ export default function MapPeerFilters({
                 >
                   <SelectValue placeholder="All moods" />
                 </SelectTrigger>
-                <SelectContent align="end" className="max-h-64">
+                <SelectContent
+                  position="popper"
+                  sideOffset={4}
+                  align="end"
+                  className="max-h-64 min-w-(--radix-select-trigger-width)"
+                >
                   <SelectItem value="all">All moods</SelectItem>
                   {AVATARS.map((mood) => (
                     <SelectItem key={mood.id} value={mood.id}>
