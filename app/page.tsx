@@ -568,6 +568,7 @@ export default function Home() {
       {previewPeer && (
         <PeerProfileModal
           peer={previewPeer}
+          myLocation={myLocation}
           onCancel={() => setPreviewPeerId(null)}
           onConnect={() => {
             const peerId = previewPeer.id;
@@ -595,6 +596,7 @@ export default function Home() {
       {conn.kind === "incoming" && incomingPeer && (
         <PeerProfileModal
           peer={incomingPeer}
+          myLocation={myLocation}
           header="Wants to connect with you"
           primaryLabel="Accept"
           secondaryLabel="Decline"

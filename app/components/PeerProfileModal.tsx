@@ -1,13 +1,23 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
+import { Info, MapPin } from "lucide-react";
 import { AVATARS } from "@/app/constants";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { formatDistanceKm, haversineDistanceKm } from "@/lib/geo";
+import { reverseGeocodeLabel } from "@/lib/reverseGeocode";
 import type { PeerDot } from "@/lib/types";
 
 export default function PeerProfileModal({
   peer,
+  myLocation,
   onConnect,
   onCancel,
   primaryLabel = "Connect",
@@ -16,6 +26,7 @@ export default function PeerProfileModal({
   showBusyNote = true,
 }: {
   peer: PeerDot;
+  myLocation?: { lat: number; lng: number } | null;
   onConnect: () => void;
   onCancel: () => void;
   primaryLabel?: string;
@@ -24,6 +35,28 @@ export default function PeerProfileModal({
   showBusyNote?: boolean;
 }) {
   const mood = AVATARS.find((a) => a.id === peer.avatar);
+  const [areaLabel, setAreaLabel] = useState<string | null>(null);
+
+  const distanceLabel = myLocation
+    ? formatDistanceKm(
+        haversineDistanceKm(
+          myLocation.lat,
+          myLocation.lng,
+          peer.lat,
+          peer.lng,
+        ),
+      )
+    : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    void reverseGeocodeLabel(peer.lat, peer.lng).then((label) => {
+      if (!cancelled) setAreaLabel(label);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [peer.lat, peer.lng]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -82,6 +115,44 @@ export default function PeerProfileModal({
                 <p className="text-xs text-zinc-400">{mood.label} mood</p>
               )}
             </div>
+          </div>
+
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-sm text-zinc-300">
+            <MapPin className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden />
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <p className="leading-snug">
+                {areaLabel ? (
+                  <>Near {areaLabel}</>
+                ) : (
+                  <span className="text-zinc-500">Looking up area…</span>
+                )}
+              </p>
+              {distanceLabel && (
+                <p className="text-xs text-zinc-400">{distanceLabel}</p>
+              )}
+            </div>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="mt-0.5 shrink-0 rounded-full p-0.5 text-zinc-500 transition-colors hover:text-zinc-300"
+                    aria-label="About stranger locations"
+                  >
+                    <Info className="size-4" aria-hidden />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="top"
+                  align="end"
+                  sideOffset={8}
+                  className="max-w-[220px] bg-zinc-800 text-center text-xs leading-snug text-zinc-200"
+                >
+                  Dots are placed 1–3 km from a stranger&apos;s real location for
+                  privacy. Area names and distances are approximate.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {peer.aboutMe.trim() && (

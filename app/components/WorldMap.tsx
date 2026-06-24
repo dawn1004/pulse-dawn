@@ -5,6 +5,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type { Map as MapboxMap, Marker } from "mapbox-gl";
 import { Users } from "lucide-react";
 import type { PeerDot } from "@/lib/types";
+import { formatDistanceKm, haversineDistanceKm } from "@/lib/geo";
 import { Badge } from "@/components/ui/badge";
 import type { PeerMapFilters } from "@/lib/filterPeers";
 import MapDotLegend from "./MapDotLegend";
@@ -18,10 +19,35 @@ function resolveMapboxToken(): string {
 
 const TOKEN = resolveMapboxToken();
 
+function dotTitle(
+  peer: { id: string; lat: number; lng: number; busy: boolean; banned: boolean },
+  connectedPeerId: string | null,
+  me: { lat: number; lng: number } | null,
+): string {
+  let status: string;
+  if (connectedPeerId === peer.id) {
+    status = "Connected with you";
+  } else if (peer.banned) {
+    status = "Restricted — cannot connect";
+  } else if (peer.busy) {
+    status = "Unavailable — in a conversation";
+  } else {
+    status = "Available — view profile";
+  }
+
+  if (!me) return status;
+
+  const distance = formatDistanceKm(
+    haversineDistanceKm(me.lat, me.lng, peer.lat, peer.lng),
+  );
+  return `${status} · ${distance}`;
+}
+
 function applyDotState(
   el: HTMLButtonElement,
-  peer: { id: string; busy: boolean; banned: boolean },
-  connectedPeerId: string | null
+  peer: { id: string; lat: number; lng: number; busy: boolean; banned: boolean },
+  connectedPeerId: string | null,
+  me: { lat: number; lng: number } | null,
 ) {
   el.classList.remove(
     "pulse-dot--available",
@@ -31,17 +57,14 @@ function applyDotState(
   );
   if (connectedPeerId === peer.id) {
     el.classList.add("pulse-dot--connected");
-    el.title = "Connected with you";
   } else if (peer.banned) {
     el.classList.add("pulse-dot--banned");
-    el.title = "Restricted — cannot connect";
   } else if (peer.busy) {
     el.classList.add("pulse-dot--busy");
-    el.title = "Unavailable — in a conversation";
   } else {
     el.classList.add("pulse-dot--available");
-    el.title = "Available — view profile";
   }
+  el.title = dotTitle(peer, connectedPeerId, me);
 }
 
 export default function WorldMap({
@@ -167,7 +190,7 @@ export default function WorldMap({
         if (!marker) {
           const el = document.createElement("button");
           el.className = "pulse-dot";
-          applyDotState(el, peer, connectedPeerId);
+          applyDotState(el, peer, connectedPeerId, me);
           el.addEventListener("click", (e) => {
             e.stopPropagation();
             if (canConnectRef.current) onPeerClickRef.current(peer.id);
@@ -180,7 +203,8 @@ export default function WorldMap({
           applyDotState(
             marker.getElement() as HTMLButtonElement,
             peer,
-            connectedPeerId
+            connectedPeerId,
+            me
           );
         }
       }
@@ -197,7 +221,7 @@ export default function WorldMap({
     return () => {
       cancelled = true;
     };
-  }, [peers, ready, connectedPeerId]);
+  }, [peers, ready, connectedPeerId, me]);
 
   return (
     <div className="absolute inset-0">
