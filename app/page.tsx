@@ -37,6 +37,7 @@ type Conn =
 type VideoState = "none" | "requesting" | "incoming" | "active";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const FAST_POLL_INTERVAL_MS = 600;
 
 export default function Home() {
   const [phase, setPhase] = useState<"gate" | "live">("gate");
@@ -402,7 +403,18 @@ export default function Home() {
         setPeers(data.peers);
         for (const s of data.signals) processSignalRef.current(s);
       } catch {}
-      if (active) timer = setTimeout(tick, POLL_INTERVAL_MS);
+      if (!active) return;
+
+      // Poll faster while users are trying to connect so requests feel instant.
+      const c = connRef.current;
+      const interval =
+        c.kind === "idle" ||
+        c.kind === "requesting" ||
+        c.kind === "incoming" ||
+        c.kind === "connecting"
+          ? FAST_POLL_INTERVAL_MS
+          : POLL_INTERVAL_MS;
+      timer = setTimeout(tick, interval);
     };
     tick();
 

@@ -27,39 +27,35 @@ export async function GET(request: NextRequest) {
   const signalCutoff = new Date(now - SIGNAL_TTL_MS);
 
   // 1) Heartbeat — refresh lastSeen for the caller only.
-  const caller = await prisma.presence.findUnique({
-    where: { id },
-    select: { fingerprint: true },
-  });
-  await prisma.presence.updateMany({
-    where: { id },
-    data: { lastSeen: new Date(now) },
-  });
+  let caller: { fingerprint: string | null } | null = null;
+  try {
+    caller = await prisma.presence.update({
+      where: { id },
+      data: { lastSeen: new Date(now) },
+      select: { fingerprint: true },
+    });
+  } catch {
+    return Response.json({ error: "unknown session" }, { status: 404 });
+  }
 
   let ban: PollResponse["ban"] = null;
-  if (caller?.fingerprint) {
-    const moderation = await prisma.deviceModeration.findUnique({
-      where: { fingerprint: caller.fingerprint },
-    });
-    if (moderation && isBanned(moderation)) {
-      ban = {
-        message: formatReportedBanMessage(
-          moderation.bannedUntil,
-          moderation.permanentBan,
-        ),
-        bannedUntil: moderation.bannedUntil?.toISOString() ?? null,
-        permanentBan: moderation.permanentBan,
-      };
-    }
-  }
+  const banPromise = caller?.fingerprint
+    ? prisma.deviceModeration.findUnique({
+        where: { fingerprint: caller.fingerprint },
+      })
+    : Promise.resolve(null);
 
   // 2) Reap stale presence rows and orphaned signals (independent deletes —
   // no atomicity needed, and avoids transactions over a PgBouncer pooler).
-  await prisma.presence.deleteMany({ where: { lastSeen: { lt: staleCutoff } } });
-  await prisma.signal.deleteMany({ where: { createdAt: { lt: signalCutoff } } });
+  const reapPresencePromise = prisma.presence.deleteMany({
+    where: { lastSeen: { lt: staleCutoff } },
+  });
+  const reapSignalsPromise = prisma.signal.deleteMany({
+    where: { createdAt: { lt: signalCutoff } },
+  });
 
   // 3) Online peers, excluding self.
-  const peersRaw = await prisma.presence.findMany({
+  const peersPromise = prisma.presence.findMany({
     where: {
       id: { not: id },
       lastSeen: { gte: staleCutoff },
@@ -77,11 +73,37 @@ export async function GET(request: NextRequest) {
     },
   });
 
+  // 4) Drain this user's mailbox: read, then delete exactly what we read so a
+  // concurrently-inserted signal is never lost.
+  const inboxPromise = prisma.signal.findMany({
+    where: { toId: id },
+    orderBy: { createdAt: "asc" },
+  });
+  const [moderation, peersRaw, inbox] = await Promise.all([
+    banPromise,
+    peersPromise,
+    inboxPromise,
+  ]);
+
+  // Await reaping after the reads are underway (keeps latency down).
+  await Promise.all([reapPresencePromise, reapSignalsPromise]);
+
+  if (moderation && isBanned(moderation)) {
+    ban = {
+      message: formatReportedBanMessage(
+        moderation.bannedUntil,
+        moderation.permanentBan
+      ),
+      bannedUntil: moderation.bannedUntil?.toISOString() ?? null,
+      permanentBan: moderation.permanentBan,
+    };
+  }
+
   const fingerprints = [
     ...new Set(
       peersRaw
         .map((p) => p.fingerprint)
-        .filter((f): f is string => typeof f === "string" && f.length > 0),
+        .filter((f): f is string => typeof f === "string" && f.length > 0)
     ),
   ];
   const moderations =
@@ -92,12 +114,6 @@ export async function GET(request: NextRequest) {
       : [];
   const bannedFingerprints = bannedFingerprintSet(moderations);
 
-  // 4) Drain this user's mailbox: read, then delete exactly what we read so a
-  // concurrently-inserted signal is never lost.
-  const inbox = await prisma.signal.findMany({
-    where: { toId: id },
-    orderBy: { createdAt: "asc" },
-  });
   if (inbox.length > 0) {
     await prisma.signal.deleteMany({
       where: { id: { in: inbox.map((s) => s.id) } },
